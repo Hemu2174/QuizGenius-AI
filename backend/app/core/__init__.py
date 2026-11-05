@@ -1,0 +1,2 @@
+"""QuizGenius AI Core Module"""
+
