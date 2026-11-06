@@ -33,11 +33,10 @@ def test_documents_protected():
     assert response.status_code == 401
     print("[PASS] Documents route correctly enforces 401 Unauthorized for unauthenticated requests")
 
-def test_quizzes_stub():
+def test_quizzes_protected():
     response = client.get("/api/quizzes")
-    assert response.status_code == 200
-    assert response.json() == []
-    print("[PASS] Quizzes stub test passed: empty list (Phase 3)")
+    assert response.status_code == 401
+    print("[PASS] Quizzes route correctly enforces 401 Unauthorized for unauthenticated requests")
 
 def test_analytics_stub():
     response = client.get("/api/analytics/overview")
@@ -47,17 +46,27 @@ def test_analytics_stub():
     assert data["quizzes_generated"] == 0
     print("[PASS] Analytics stub test passed: zero state verified")
 
-def test_post_quizzes_unimplemented():
-    response = client.post("/api/quizzes/generate")
-    assert response.status_code == 501
-    print("[PASS] POST /quizzes/generate correctly returned 501 Not Implemented (Phase 3)")
+def test_post_quizzes_generate_protected():
+    response = client.post("/api/quizzes/generate", json={})
+    assert response.status_code == 401
+    print("[PASS] POST /api/quizzes/generate correctly enforces 401 Unauthorized")
+
+def test_ai_status():
+    response = client.get("/api/ai/status")
+    assert response.status_code == 200
+    data = response.json()
+    assert "status" in data
+    assert "model" in data
+    assert "is_configured" in data
+    print("[PASS] GET /api/ai/status test passed:", data)
 
 if __name__ == "__main__":
     print("--- Running QuizGenius AI Backend Tests ---")
     test_root()
     test_health()
     test_documents_protected()
-    test_quizzes_stub()
+    test_quizzes_protected()
+    test_post_quizzes_generate_protected()
     test_analytics_stub()
-    test_post_quizzes_unimplemented()
+    test_ai_status()
     print("--- ALL BACKEND TESTS PASSED SUCCESSFULLY! ---")

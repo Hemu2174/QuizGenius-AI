@@ -19,37 +19,56 @@ import StatCard from '../components/StatCard'
 import UploadCard from '../components/UploadCard'
 import EmptyState from '../components/EmptyState'
 import Button from '../components/Button'
+import GenerateQuizModal from '../components/GenerateQuizModal'
+import QuizDetailModal from '../components/QuizDetailModal'
 import { useAuth } from '../context/AuthContext'
-import { documentsService } from '../services/api'
+import { documentsService, quizzesService } from '../services/api'
 import { formatDate, formatBytes } from '../utils/formatters'
 
 export default function Dashboard() {
   const { user } = useAuth()
   const { health } = useOutletContext()
   const [documents, setDocuments] = useState([])
+  const [quizzes, setQuizzes] = useState([])
   const [loadingDocs, setLoadingDocs] = useState(false)
+  const [isGenerateOpen, setIsGenerateOpen] = useState(false)
+  const [selectedQuiz, setSelectedQuiz] = useState(null)
+  const [isDetailOpen, setIsDetailOpen] = useState(false)
 
-  const fetchDocs = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setLoadingDocs(true)
     try {
-      const data = await documentsService.listDocuments()
-      setDocuments(Array.isArray(data) ? data : [])
+      const [docsData, quizzesData] = await Promise.allSettled([
+        documentsService.listDocuments(),
+        quizzesService.listQuizzes(),
+      ])
+      if (docsData.status === 'fulfilled') {
+        setDocuments(Array.isArray(docsData.value) ? docsData.value : [])
+      }
+      if (quizzesData.status === 'fulfilled') {
+        setQuizzes(Array.isArray(quizzesData.value) ? quizzesData.value : [])
+      }
     } catch (e) {
-      // Non-blocking for dashboard
-      console.debug('Dashboard doc fetch:', e)
+      console.debug('Dashboard data fetch:', e)
     } finally {
       setLoadingDocs(false)
     }
   }, [])
 
   useEffect(() => {
-    fetchDocs()
-  }, [fetchDocs])
+    fetchData()
+  }, [fetchData])
 
   const completedDocsCount = documents.filter((d) => d.status === 'completed').length
 
   const handleDocumentProcessed = (newDoc) => {
     setDocuments((prev) => [newDoc, ...prev.filter((d) => d.id !== newDoc.id)])
+  }
+
+  const handleQuizGenerated = (newQuiz) => {
+    setQuizzes((prev) => [newQuiz, ...prev])
+    setSelectedQuiz(newQuiz)
+    setIsDetailOpen(true)
   }
 
   return (
@@ -194,12 +213,16 @@ export default function Dashboard() {
           />
           <StatCard
             title="Quizzes Generated"
-            value="0"
-            subtitle="Scheduled for Phase 3"
+            value={quizzes.length.toString()}
+            subtitle={
+              quizzes.length === 0
+                ? 'Generate with Groq AI'
+                : `${quizzes.length} AI quiz${quizzes.length === 1 ? '' : 'zes'} ready`
+            }
             icon={BrainCircuit}
             iconBg="bg-violet-50"
             iconColor="text-violet-600"
-            isZeroState={true}
+            isZeroState={quizzes.length === 0}
           />
           <StatCard
             title="Average Score"
@@ -274,14 +297,15 @@ export default function Dashboard() {
           <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-soft">
             <h3 className="text-sm font-semibold text-slate-900 mb-3">Quick Actions</h3>
             <div className="grid grid-cols-2 gap-2.5">
-              <Link
-                to="/documents"
-                className="p-3 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40 transition-colors group flex flex-col"
+              <button
+                type="button"
+                onClick={() => setIsGenerateOpen(true)}
+                className="p-3 rounded-lg border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-100/60 transition-colors group flex flex-col text-left"
               >
-                <FileText className="w-4 h-4 text-indigo-600 mb-2 group-hover:scale-110 transition-transform" />
-                <span className="text-xs font-semibold text-slate-800">My Documents</span>
-                <span className="text-[10px] text-slate-400 mt-0.5">Manage study files</span>
-              </Link>
+                <Sparkles className="w-4 h-4 text-indigo-600 mb-2 group-hover:scale-110 transition-transform" />
+                <span className="text-xs font-semibold text-indigo-900">Generate Quiz</span>
+                <span className="text-[10px] text-indigo-600 mt-0.5">Groq AI synthesis</span>
+              </button>
 
               <Link
                 to="/quizzes"
@@ -370,6 +394,20 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Generate Quiz Modal */}
+      <GenerateQuizModal
+        isOpen={isGenerateOpen}
+        onClose={() => setIsGenerateOpen(false)}
+        onQuizGenerated={handleQuizGenerated}
+      />
+
+      {/* Quiz Detail Preview Modal */}
+      <QuizDetailModal
+        quiz={selectedQuiz}
+        isOpen={isDetailOpen}
+        onClose={() => setIsDetailOpen(false)}
+      />
     </div>
   )
 }

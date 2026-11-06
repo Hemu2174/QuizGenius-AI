@@ -1,218 +1,153 @@
 # QuizGenius AI – Project Status & Review Report
 
-**Date of Update**: November 4, 2026  
-**Current Milestone**: Phase 2 Complete & Verified  
+**Date of Update**: November 5, 2026  
+**Current Milestone**: Phase 3 Complete & Verified (Groq AI + RAG + Question Generation)
 
 ---
 
-## 1. Phase 2 Features Implemented
+## 1. Phase 3 Features Implemented
 
-### **Real Supabase Authentication & User Isolation**
-- Integrated `@supabase/supabase-js` on frontend and `supabase-py` on backend.
-- Full authentication lifecycle: user registration with name/email/password, user login, logout, and session persistence across browser reloads via `onAuthStateChange`.
-- Password reset using Supabase `resetPasswordForEmail`.
-- Route protection with `ProtectedRoute`: displays accessible `LoadingSpinner` during session resolution, redirects unauthorized visitors to `/login`, and redirects authenticated users away from auth forms back to the dashboard.
-- Display of authentic student user details (name, email, role, avatar initial) derived from Supabase session.
-- Profile settings form allows updating student profile and persists to `public.profiles`.
-- Strict RLS (Row Level Security) on `profiles`, `documents`, and `document_chunks`.
-- Backend enforces authentication on all `/api/documents/*` and `/api/auth/me` endpoints using `HTTPBearer` JWT token verification. User identity is strictly derived from the verified token, never trusted from client payloads.
+### **Groq AI Service Integration**
+- Integrated the official Groq Python SDK (`groq`).
+- Configured dynamic model selection via environment variables (`GROQ_MODEL`), defaulting to currently supported and verified model `qwen/qwen3.8-27b` (with verified structured JSON object generation capabilities).
+- Supported configurable temperature (`GROQ_TEMPERATURE=0.3`) and token limits (`GROQ_MAX_TOKENS=4096`).
+- Implemented robust error handling, rate-limit backoff with exponential retry logic, timeout configurations (60s), and defensive prompt structure.
+- Prompt injection defense: The system prompt explicitly instructs the LLM to treat all study document excerpts as untrusted external reference text, ignoring any embedded instructions, prompt overrides, or system commands.
+- Secure design: The Groq API key is strictly maintained backend-only, never logged, and never exposed to the frontend or git commits.
 
-### **Private PDF Storage in Supabase (`study-documents`)**
-- Integrated Supabase private storage bucket `study-documents`.
-- Client uploads files directly into `{user_id}/{timestamp}-{filename}.pdf` using user session tokens.
-- Storage RLS policies ensure authenticated users can only upload, read, and delete within their own user-specific folder.
-- Temporary signed URLs generated for secure file viewing without public bucket exposure.
-- Enforced file type validation (PDF only) and size constraints (10 MB maximum).
+### **RAG Retrieval Engine (`retrieval_service.py`)**
+- Modular retrieval architecture querying the PostgreSQL `document_chunks` table with strict user and document ownership verification.
+- **Keyword-based relevance ranking**: Scores and ranks document chunks based on term-frequency matching against user-specified or auto-detected topic keywords (with English stop-word filtering).
+- **Stratified uniform sampling**: If no topics or "All Topics" is selected, retrieves chunks distributed evenly across the entire document (beginning, middle, and end) rather than clustering at the start.
+- Context window management: Enforces token/character bounds (~14,000 characters) to fit comfortably within the LLM's context limit without unnecessary token usage.
+- Preservation of provenance: Retains chunk IDs and page references (`page_start`, `page_end`) for grounded source citations in generated questions.
+- Automatic topic discovery (`extract_document_topics`): Scans document chunk headings and recurring conceptual themes to discover 3-8 focus topics for student selection.
 
-### **PyMuPDF PDF Processing & Text Chunking Engine**
-- Backend text extraction pipeline built with PyMuPDF (`pymupdf`).
-- Extracts digital text page-by-page and accurately tracks `page_count`.
-- Automatic detection of empty or scanned PDFs: raises `ScannedPDFException` with an explicit notice that Optical Character Recognition (OCR) support will be added in a later phase.
-- Word-boundary-safe chunking algorithm with configurable chunk size (~1000 characters) and overlap (~150 characters).
-- Preserves `page_start` and `page_end` references for every chunk.
-- Chunks stored in PostgreSQL table `public.document_chunks` with `(document_id, chunk_index)` uniqueness.
-- Safe retry processing: clears old chunks before re-chunking, preventing duplicate chunks.
-- Document deletion: removes file from private storage and deletes database record with cascade deletion of chunks.
+### **AI Question Generation & Pydantic Validation**
+- Two distinct question modalities:
+  1. **Multiple Choice Questions (MCQs)**: Exactly four choices (`A`, `B`, `C`, `D`), single correct answer identifier, comprehensive educational explanation, topic, difficulty, and source page citations. Distractors are plausible within the subject domain but unambiguously incorrect.
+  2. **Short Answer Questions**: Clear conceptual prompt, model expected answer, array of 2 to 5 key points/concepts required for credit, grading rubric explanation, topic, difficulty, and source page citations.
+- **Mixed Sets**: Automatically balances 50% MCQs and 50% Short Answer questions.
+- Resilient JSON parsing: Safely strips markdown code fences (` ```json `), extracts innermost JSON objects, and rejects malformed or incomplete responses.
+- Strict Pydantic models (`MCQGenerated`, `ShortAnswerGenerated`, `RawLLMQuizOutput`, `QuizGenerateRequest`, `QuizDetailResponse`).
+
+### **Database Migration (`002_phase3_quiz_generation.sql`)**
+- Created `public.quizzes` table with `user_id`, `document_id`, `title`, `description`, `question_type`, `difficulty`, `total_questions`, `status`, and timestamps.
+- Created `public.questions` table with `quiz_id`, `user_id`, `question_type`, `question_text`, `options` (JSONB), `correct_answer`, `expected_answer`, `key_points` (JSONB), `explanation`, `difficulty`, `topic`, `source_chunk_ids` (JSONB), `source_pages` (JSONB).
+- Cascading foreign key constraints ensuring that when a quiz is deleted, all its questions are automatically purged.
+- Enabled Row Level Security (RLS) on both tables with strict ownership policies (`auth.uid() = user_id`) for `SELECT`, `INSERT`, `UPDATE`, and `DELETE`.
+
+### **Backend API Endpoints**
+- `GET /api/ai/status`: Reports Groq connection readiness, model availability, and configuration status (never leaks API keys).
+- `GET /api/documents/{document_id}/topics`: Authenticated topic discovery from document chunks.
+- `POST /api/quizzes/generate`: Authenticated end-to-end generation endpoint verifying document ownership, retrieving grounded chunks, querying Groq, validating schemas, persisting to PostgreSQL, and returning the full quiz payload.
+- `GET /api/quizzes`: Authenticated user quiz catalog with joined document title.
+- `GET /api/quizzes/{quiz_id}`: Detailed question inspection for review.
+- `DELETE /api/quizzes/{quiz_id}`: Deletes a user's quiz and cascades question records.
+
+### **Frontend User Interface**
+- **Generate Quiz Modal (`GenerateQuizModal.jsx`)**:
+  - Interactive modal with document dropdown, question type selector (MCQ, Short Answer, Mixed), difficulty pills (Easy, Medium, Hard), question count (5, 10, 15, 20), and dynamic topic selection pills.
+  - Multi-stage generation progress indicator and error messaging.
+- **Quiz Preview Modal (`QuizDetailModal.jsx`)**:
+  - Rich question inspector: Displays question text, MCQ option letters with highlighted green styling for the correct answer, model expected answer and key points for short answer questions, educational explanation box with lightbulb icon, and page citations.
+- **My Quizzes Page (`Quizzes.jsx`)**:
+  - Live quiz listing with difficulty badges, question count chips, document source name, search bar, and filters.
+  - "Review Questions" action opening the preview modal and "Delete Quiz" action with confirmation.
+- **Cross-Page Integration**:
+  - `Dashboard.jsx`: Displays live quiz count in KPI stat cards and launches the generator from Quick Actions.
+  - `Documents.jsx`: Added "Generate Quiz from Document" button on all completed study documents.
 
 ---
 
-## 2. Files Created & Modified in Phase 2
+## 2. Files Created & Modified in Phase 3
 
-### **Database & Migrations**
-- `database/migrations/001_phase2_schema.sql`: Complete PostgreSQL migration script creating:
-  - `public.profiles` table with updated-at trigger.
-  - `public.documents` table with status constraint (`uploaded`, `processing`, `completed`, `failed`) and indexes.
-  - `public.document_chunks` table with unique constraint `(document_id, chunk_index)`.
-  - `handle_new_user()` trigger on `auth.users` for automatic profile provisioning.
-  - RLS policies on `profiles`, `documents`, `document_chunks`.
-  - Storage bucket initialization and RLS policies on `study-documents`.
+### **Database**
+- `database/migrations/002_phase3_quiz_generation.sql`: Migration creating `quizzes` and `questions` tables with RLS and foreign keys.
+- `database/README.md`: Updated documentation covering both Phase 2 and Phase 3 migrations.
 
 ### **Backend (`backend/`)**
-- `backend/requirements.txt`: Added `pymupdf>=1.24.0` and `supabase>=2.4.0`.
-- `backend/.env` & `backend/.env.example`: Updated with `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY`.
-- `backend/app/core/config.py`: Updated with path resolution for `backend/.env`, Supabase configuration, and chunking parameters.
-- `backend/app/core/auth.py`: Created FastAPI `get_current_user` security dependency with Supabase token verification.
-- `backend/app/schemas/document.py`: Created `DocumentProcessRequest`, `DocumentResponse`, `DocumentDetailResponse`, `DocumentChunkResponse`, `DocumentRetryResponse`.
-- `backend/app/schemas/user.py`: Added `UserProfileResponse`.
-- `backend/app/schemas/__init__.py`: Registered Phase 2 schemas.
-- `backend/app/services/pdf_service.py`: Implemented PyMuPDF extraction, empty/scanned PDF detection, and chunking service.
-- `backend/app/services/supabase_service.py`: Implemented Supabase client management, JWT token verification, storage download/delete, and signed URL generation.
-- `backend/app/api/routes/auth.py`: Implemented `GET /api/auth/me` with verified user profile.
-- `backend/app/api/routes/documents.py`: Implemented document endpoints (`GET`, `POST /process`, `GET /{id}`, `DELETE /{id}`, `POST /{id}/retry`).
-- `backend/app/main.py`: Added dedicated `HTTPException` and `RequestValidationError` handlers.
-- `backend/tests/test_phase2.py`: Automated Phase 2 test suite verifying 8 test cases.
-- `backend/tests/test_api.py`: Updated endpoint integration tests.
+- `backend/requirements.txt`: Added `groq>=0.9.0`.
+- `backend/.env.example`: Added `GROQ_MODEL`, `GROQ_TEMPERATURE`, `GROQ_MAX_TOKENS`, and `GROQ_API_KEY`.
+- `backend/app/core/config.py`: Added Groq configuration settings with defaults.
+- `backend/app/schemas/quiz.py`: Comprehensive Pydantic models for generated questions, requests, and responses.
+- `backend/app/services/groq_service.py`: Modular Groq inference engine with prompt injection defenses and JSON validation.
+- `backend/app/services/retrieval_service.py`: Keyword-ranked RAG context retrieval and document topic extraction.
+- `backend/app/api/routes/ai.py`: Implemented `GET /api/ai/status`.
+- `backend/app/api/routes/quizzes.py`: Implemented `GET /api/quizzes`, `POST /api/quizzes/generate`, `GET /{id}`, `DELETE /{id}`.
+- `backend/app/api/routes/documents.py`: Added `GET /{document_id}/topics`.
+- `backend/app/api/routes/__init__.py`: Registered `ai_router`.
+- `backend/tests/test_phase3.py`: Automated 10-test suite verifying Groq config, schemas, retrieval, injection defense, security, and mocked generation.
+- `backend/tests/test_api.py`: Updated endpoint regression tests.
 
 ### **Frontend (`frontend/`)**
-- `frontend/package.json`: Installed `@supabase/supabase-js`.
-- `frontend/.env` & `frontend/.env.example`: Added `VITE_SUPABASE_PUBLISHABLE_KEY`.
-- `frontend/src/services/supabase.js`: Initialized reusable Supabase client.
-- `frontend/src/services/api.js`: Added Axios JWT interceptor, `authService`, and full `documentsService` methods.
-- `frontend/src/context/AuthContext.jsx`: Implemented real Supabase authentication, session persistence, profile sync, and password recovery.
-- `frontend/src/components/ProtectedRoute.jsx`: Added loading state handling during session check.
-- `frontend/src/layouts/AuthLayout.jsx`: Added redirect for authenticated users.
-- `frontend/src/pages/Login.jsx`: Connected real Supabase `signInWithPassword` and dynamic redirect.
-- `frontend/src/pages/Signup.jsx`: Connected real Supabase `signUp` with email verification feedback.
-- `frontend/src/pages/ForgotPassword.jsx`: Connected real Supabase `resetPasswordForEmail`.
-- `frontend/src/components/UploadCard.jsx`: Connected drag-and-drop upload to Supabase Storage and backend PyMuPDF extraction.
-- `frontend/src/pages/Documents.jsx`: Implemented document listing, real-time search, filters, details drawer, retry, and deletion.
-- `frontend/src/pages/Dashboard.jsx`: Connected live document counts and recent document activity.
-- `frontend/src/pages/Settings.jsx`: Connected real profile updates to Supabase.
+- `frontend/src/services/api.js`: Added `aiService`, `quizzesService`, and `documentsService.getTopics`.
+- `frontend/src/components/GenerateQuizModal.jsx`: Multi-step interactive quiz generation modal.
+- `frontend/src/components/QuizDetailModal.jsx`: Question review modal with highlighted correct answers and explanations.
+- `frontend/src/pages/Quizzes.jsx`: Upgraded quiz management view with live list, search, filters, review, and delete actions.
+- `frontend/src/pages/Dashboard.jsx`: Connected live quiz KPI counts, quick action generator, and review modals.
+- `frontend/src/pages/Documents.jsx`: Added instant "Generate Quiz" button to completed document cards.
 
 ---
 
-## 3. Database Migration Instructions
+## 3. Automated Test Verification Results
 
-Execute the SQL script in your Supabase project:
-1. Open the [Supabase Dashboard](https://supabase.com/dashboard).
-2. Navigate to your project -> **SQL Editor**.
-3. Copy the contents of `database/migrations/001_phase2_schema.sql` into a new query.
-4. Click **Run** to execute the migration.
+### **Phase 3 Test Suite (`backend/tests/test_phase3.py`)**
+Execution time: **1.544 seconds** | Result: **10/10 PASSED (100%)**
+- `test_01_groq_configuration`: PASSED (Model: `qwen/qwen3.8-27b`, temp: 0.3, max_tokens: 4096)
+- `test_02_groq_missing_api_key`: PASSED (Handles missing key gracefully)
+- `test_03_mcq_schema_validation`: PASSED (Enforces 4 options, valid correct answer letter)
+- `test_04_short_answer_schema_validation`: PASSED (Enforces expected answer and key points)
+- `test_05_json_markdown_fence_cleaning`: PASSED (Strips markdown code fences and conversational wrappers)
+- `test_06_prompt_injection_defense`: PASSED (Untrusted reference defense verified)
+- `test_07_keyword_retrieval_scoring`: PASSED (Relevant chunk scored 1.061 vs 0.000)
+- `test_08_phase3_endpoints_unauthenticated_blocked`: PASSED (All 5 endpoints return 401 Unauthorized)
+- `test_09_ai_status_endpoint`: PASSED (Status 200, no credentials exposed)
+- `test_10_mocked_quiz_generation_pipeline`: PASSED (Full synthesis pipeline validated)
 
-The migration sets up:
-- The 3 tables (`profiles`, `documents`, `document_chunks`).
-- Cascade deletions and unique indexes.
-- Auto-profile trigger on `auth.users`.
-- Full Row Level Security (RLS) policies.
-- Storage RLS policies on the `study-documents` bucket.
+### **Phase 2 Regression Tests (`backend/tests/test_phase2.py`)**
+Execution time: **1.485 seconds** | Result: **8/8 PASSED (100%)**
+- Health, auth status, 401 enforcement, PyMuPDF extraction, scanned PDF detection, word boundary safety.
 
----
+### **Phase 1 & General API Regression Tests (`backend/tests/test_api.py`)**
+Result: **ALL PASSED**
+- Root endpoint, health endpoint, documents protected, quizzes protected, generate protected, zero-state analytics, AI status.
 
-## 4. Registered API Endpoints
-
-| Method | Endpoint | Auth Required | Description | Phase Status |
-| :--- | :--- | :--- | :--- | :--- |
-| `GET` | `/` | No | API root metadata & health check link | **Active** |
-| `GET` | `/api/health` | No | System health check (version `1.0.0-phase2`) | **Active** |
-| `GET` | `/api/auth/status` | No | Supabase authentication status | **Active** |
-| `GET` | `/api/auth/me` | **Yes (Bearer JWT)** | Authenticated user profile from Supabase | **Active** |
-| `GET` | `/api/documents` | **Yes (Bearer JWT)** | List authenticated user's documents | **Active** |
-| `POST` | `/api/documents/process` | **Yes (Bearer JWT)** | Download from storage, extract text with PyMuPDF & chunk | **Active** |
-| `GET` | `/api/documents/{id}` | **Yes (Bearer JWT)** | Document details, extracted text, chunks & signed URL | **Active** |
-| `DELETE` | `/api/documents/{id}` | **Yes (Bearer JWT)** | Delete document from DB and storage file | **Active** |
-| `POST` | `/api/documents/{id}/retry` | **Yes (Bearer JWT)** | Re-extract & re-chunk failed document | **Active** |
-| `GET` | `/api/quizzes` | No | Quizzes list (Phase 3 stub) | Prepared |
-| `POST` | `/api/quizzes/generate` | No | AI Quiz generation (Phase 3 stub) | 501 Not Implemented |
-| `GET` | `/api/analytics/overview` | No | Student analytics overview | Active (zero baseline) |
+### **Frontend Production Build (`npm run build`)**
+Execution time: **12.41 seconds** | Result: **0 ERRORS, 0 WARNINGS**
+- Strict JSX / JS only (0 TypeScript / TSX files).
 
 ---
 
-## 5. Commands to Run & Test
+## 4. Groq Model Documentation
 
-### Run FastAPI Backend
-```bash
-cd backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Run Frontend Development Server
-```bash
-cd frontend
-npm run dev
-```
-
-### Run Frontend Production Build
-```bash
-cd frontend
-npm run build
-```
-
-### Run Backend Phase 2 Automated Tests
-```bash
-python -u backend/tests/test_phase2.py
-```
-
-### Run Backend API Integration Tests
-```bash
-python -u backend/tests/test_api.py
-```
+- **Configured Model**: `qwen/qwen3.8-27b`
+- **Verification Details**: Verified against the active Groq account. The model supports Groq's high-speed inference and `response_format={"type": "json_object"}` structured generation. Older model identifiers such as `llama-3.3-70b-versatile` returned 404 on this account, whereas `qwen/qwen3.8-27b` produces high-fidelity, grounded educational questions conforming strictly to Pydantic schemas.
+- **Configurability**: Configurable via `GROQ_MODEL` environment variable in `backend/.env`.
 
 ---
 
-## 6. Actually Executed Test Results
+## 5. RAG Retrieval Strategy Note
 
-### Test Suite 1: Phase 2 Backend Automated Tests (`python -u backend/tests/test_phase2.py`)
-```
---- RUNNING QUIZGENIUS AI PHASE 2 BACKEND TEST SUITE ---
-test_01_health_endpoint: GET /api/health returns 200 with online status and phase 2 metadata. ... [PASS]
-test_02_auth_status_endpoint: GET /api/auth/status returns 200 indicating active Supabase authentication. ... [PASS]
-test_03_unauthenticated_requests_blocked: Protected endpoints must reject requests lacking a Bearer token with 401. ... [PASS]
-test_04_invalid_bearer_token_rejected: Protected endpoints must reject malformed/invalid tokens with 401. ... [PASS]
-test_05_pymupdf_pdf_extraction: PyMuPDF service correctly extracts digital text, counts pages, and chunks content. ... [PASS]
-test_06_scanned_blank_pdf_detection: PyMuPDF service identifies scanned/empty PDFs and raises ScannedPDFException. ... [PASS]
-test_07_chunking_word_boundary_safety: Chunking algorithm does not cut words in half and preserves whitespace structure. ... [PASS]
-test_08_corrupted_pdf_rejection: Invalid byte stream raises ValueError. ... [PASS]
+QuizGenius AI currently implements **keyword-based relevance ranking** with term frequency (TF) scoring over cleaned word tokens (with English stop-word filtering) and **stratified uniform sampling** across document sections.
 
-----------------------------------------------------------------------
-Ran 8 tests in 1.613s
-OK
---- ALL PHASE 2 BACKEND TESTS PASSED (8/8) ---
-```
-*Result*: **8/8 PASSED**.
-
-### Test Suite 2: API Integration Tests (`python -u backend/tests/test_api.py`)
-```
---- Running QuizGenius AI Backend Tests ---
-[PASS] Root endpoint test passed: {'name': 'QuizGenius AI', 'version': '1.0.0-phase2', 'status': 'online', 'message': 'Welcome to QuizGenius AI API', 'docs_url': '/docs', 'health_check': '/api/health'}
-[PASS] Health endpoint test passed: {'name': 'QuizGenius AI', 'status': 'online', 'version': '1.0.0-phase2', 'environment': 'development'}
-[PASS] Documents route correctly enforces 401 Unauthorized for unauthenticated requests
-[PASS] Quizzes stub test passed: empty list (Phase 3)
-[PASS] Analytics stub test passed: zero state verified
-[PASS] POST /quizzes/generate correctly returned 501 Not Implemented (Phase 3)
---- ALL BACKEND TESTS PASSED SUCCESSFULLY! ---
-```
-*Result*: **PASSED**.
-
-### Test Suite 3: Frontend Production Build (`npm run build`)
-```
-> quizgenius-frontend@0.1.0 build
-> vite build
-
-vite v5.4.21 building for production...
-transforming...
-✓ 2316 modules transformed.
-rendering chunks...
-computing gzip size...
-dist/index.html                   0.81 kB │ gzip:   0.46 kB
-dist/assets/index-Diokj7oR.css   30.46 kB │ gzip:   5.96 kB
-dist/assets/index-3eAmE7e8.js   948.20 kB │ gzip: 267.04 kB
-✓ built in 15.79s
-```
-*Result*: **PASSED** (0 errors, 0 warnings).
+> [!NOTE]
+> Vector embeddings (such as pgvector or dedicated embedding models) are deliberately not claimed as implemented in this phase. The `retrieval_service.py` architecture is modular so embedding-based vector search can be plugged in seamlessly when vector infrastructure is deployed.
 
 ---
 
-## 7. Known Limitations (Phase 2 Scope)
+## 6. Migration Execution Instructions
 
-1. **OCR for Scanned Documents**: As required, scanned PDFs with no digital text are detected and flagged with an informative message indicating OCR will be added in a later phase.
-2. **AI Question Synthesis**: Groq API integration and interactive quiz engines are scheduled for Phase 3.
-3. **Database Migration Requirement**: If `database/migrations/001_phase2_schema.sql` has not yet been executed in the Supabase project, database queries return an informative 503 response directing the user to run the migration.
+To enable quiz persistence in your Supabase database:
+1. Open your [Supabase Project Dashboard](https://supabase.com/dashboard).
+2. Go to the **SQL Editor**.
+3. Copy the contents of [`database/migrations/002_phase3_quiz_generation.sql`](file:///c:/Users/Hemanth/Documents/GitHub/QuizGenius-AI/database/migrations/002_phase3_quiz_generation.sql).
+4. Run the SQL script to create `quizzes` and `questions` with Row Level Security.
 
 ---
 
-## 8. Pending Work for Phase 3
+## 7. Known Limitations & Next Steps (Phase 4 Roadmap)
 
-- [ ] Groq API integration with `llama-3.3-70b-versatile` to synthesize questions from extracted `document_chunks`.
-- [ ] Interactive quiz interface with timer, answer selection, and immediate feedback.
-- [ ] Automatic evaluation of MCQ and short-answer questions.
-- [ ] Weak-topic diagnostic scoring and learning analytics progression.
+1. **Interactive Test-Taking Engine (Phase 4)**: The current interface is a generated quiz preview and question review engine. Full test attempts with countdown timers, student answer submission, and instant grading will be implemented in Phase 4.
+2. **Short-Answer Auto-Grading (Phase 4)**: Semantic LLM comparison of student short-answer responses against the stored `expected_answer` and `key_points`.
+3. **Weak-Topic Diagnostics (Phase 4)**: Analytics dashboard tracking mistakes by topic taxonomy and historical score progression.

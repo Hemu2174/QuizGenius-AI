@@ -14,8 +14,8 @@ else:
 
 class Settings:
     PROJECT_NAME: str = os.getenv("PROJECT_NAME", "QuizGenius AI")
-    VERSION: str = "1.0.0-phase2"
-    DESCRIPTION: str = "AI-powered learning platform with PDF text extraction and Supabase storage/auth"
+    VERSION: str = "1.0.0-phase3"
+    DESCRIPTION: str = "AI-powered learning platform with PDF text extraction, Groq AI inference, and RAG question generation"
     API_V1_STR: str = "/api"
     ENVIRONMENT: str = os.getenv("APP_ENV", "development")
     PORT: int = int(os.getenv("PORT", "8000"))
@@ -40,6 +40,9 @@ class Settings:
 
     # Groq AI Configuration (Phase 3)
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
+    GROQ_TEMPERATURE: float = float(os.getenv("GROQ_TEMPERATURE", "0.3"))
+    GROQ_MAX_TOKENS: int = int(os.getenv("GROQ_MAX_TOKENS", "4096"))
 
     # PDF Processing configurations
     CHUNK_SIZE: int = int(os.getenv("PDF_CHUNK_SIZE", "1000"))  # characters per chunk

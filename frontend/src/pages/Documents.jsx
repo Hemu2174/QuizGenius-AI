@@ -13,12 +13,15 @@ import {
   Layers,
   ChevronDown,
   ChevronUp,
+  Sparkles,
 } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 import UploadCard from '../components/UploadCard'
 import Button from '../components/Button'
 import LoadingSpinner from '../components/LoadingSpinner'
+import GenerateQuizModal from '../components/GenerateQuizModal'
+import QuizDetailModal from '../components/QuizDetailModal'
 import { documentsService } from '../services/api'
 import { formatBytes, formatDate } from '../utils/formatters'
 
@@ -32,6 +35,10 @@ export default function Documents() {
   const [selectedDocDetails, setSelectedDocDetails] = useState(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [errorBanner, setErrorBanner] = useState(null)
+  const [generateDocId, setGenerateDocId] = useState(null)
+  const [isGenerateOpen, setIsGenerateOpen] = useState(false)
+  const [createdQuiz, setCreatedQuiz] = useState(null)
+  const [isDetailOpen, setIsDetailOpen] = useState(false)
 
   const loadDocuments = useCallback(async () => {
     setLoading(true)
@@ -316,8 +323,22 @@ export default function Documents() {
                   </div>
                 </div>
 
-                {/* Bottom expandable details trigger */}
-                <div className="mt-4 pt-2">
+                {/* Bottom action buttons */}
+                <div className="mt-4 pt-2 space-y-2">
+                  {doc.status === 'completed' && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={Sparkles}
+                      className="w-full text-xs justify-center"
+                      onClick={() => {
+                        setGenerateDocId(doc.id)
+                        setIsGenerateOpen(true)
+                      }}
+                    >
+                      Generate Quiz from Document
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -390,6 +411,27 @@ export default function Documents() {
           })}
         </div>
       )}
+
+      {/* Generate Quiz Modal */}
+      <GenerateQuizModal
+        isOpen={isGenerateOpen}
+        initialDocumentId={generateDocId}
+        onClose={() => {
+          setIsGenerateOpen(false)
+          setGenerateDocId(null)
+        }}
+        onQuizGenerated={(newQuiz) => {
+          setCreatedQuiz(newQuiz)
+          setIsDetailOpen(true)
+        }}
+      />
+
+      {/* Quiz Detail Preview Modal */}
+      <QuizDetailModal
+        quiz={createdQuiz}
+        isOpen={isDetailOpen}
+        onClose={() => setIsDetailOpen(false)}
+      />
     </div>
   )
 }

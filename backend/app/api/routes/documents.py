@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.core.auth import get_current_user, AuthenticatedUser
 from app.services.supabase_service import supabase_service
 from app.services.pdf_service import pdf_service, ScannedPDFException
+from app.services.retrieval_service import retrieval_service
+from app.schemas.quiz import DocumentTopicsResponse
 from app.schemas.document import (
     DocumentProcessRequest,
     DocumentResponse,
@@ -423,3 +425,48 @@ async def retry_processing(
         raise
     except Exception as e:
         _handle_supabase_error(e)
+
+
+@router.get("/{document_id}/topics", response_model=DocumentTopicsResponse, summary="Extract Key Topics from Document")
+async def get_document_topics(
+    document_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> DocumentTopicsResponse:
+    """
+    Extracts representative educational topics from document chunks.
+    Verifies document ownership before analyzing chunks.
+    """
+    client = supabase_service.get_user_client(current_user.token)
+    try:
+        # Verify ownership
+        doc_res = (
+            client.from_("documents")
+            .select("id, status")
+            .eq("id", document_id)
+            .eq("user_id", current_user.id)
+            .execute()
+        )
+        if not doc_res.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document not found or access denied.",
+            )
+        
+        doc = doc_res.data[0]
+        if doc.get("status") != "completed":
+            return DocumentTopicsResponse(
+                document_id=document_id,
+                topics=["General Overview", "Core Concepts"]
+            )
+
+        topics = retrieval_service.extract_document_topics(
+            client=client,
+            document_id=document_id,
+            user_id=current_user.id
+        )
+        return DocumentTopicsResponse(document_id=document_id, topics=topics)
+    except HTTPException:
+        raise
+    except Exception as e:
+        _handle_supabase_error(e)
+
